@@ -1,0 +1,36 @@
+# Web Framework
+streamlit
+
+# Data Processing
+pandas
+numpy
+openpyxl
+python-dotenv
+
+# Database
+SQLAlchemy
+
+# LLM Integration
+ollama
+langchain
+langchain-community
+langchain-experimental
+
+# Knowledge Graph
+cognee
+
+# Visualization
+matplotlib
+plotly
+networkx
+pyvis
+
+# Utilities
+tqdm
+python-magic
+PyPDF2
+markdown
+
+# Testing
+pytest
+pytest-cov
