@@ -1,6 +1,7 @@
 import requests
 import json
 import logging
+import os
 from src.utils.database import DatabaseManager
 from src.knowledge_graph.graph_manager import GraphManager
 
@@ -9,9 +10,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 class LLMManager:
-    def __init__(self, model="qwen/qwen3-vl-4b", api_url="http://127.0.0.1:1234/v1/chat/completions"):
+    def __init__(self, model="qwen/qwen3-vl-4b", api_url=None):
+        base_url = os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:1234/v1")
+        self.api_key = os.getenv("OPENAI_API_KEY")
         self.model = model
-        self.api_url = api_url
+        self.api_url = api_url or f"{base_url}/chat/completions"
         self.db_manager = DatabaseManager()
         self.graph_manager = GraphManager()
         
@@ -35,9 +38,9 @@ class LLMManager:
             })
             
             # 调用LM Studio的OpenAI兼容API
-            headers = {
-                "Content-Type": "application/json"
-            }
+            headers = {"Content-Type": "application/json"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
             payload = {
                 "model": self.model,
                 "messages": messages,

@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import shutil
 from datetime import datetime
 
 class DatabaseManager:
@@ -127,28 +128,86 @@ class DatabaseManager:
         ''')
 
         self.commit()
+        self.migrate_tables()
         self.disconnect()
 
-    def insert_trade(self, trade_data):
-        """插入交易记录"""
+    def backup_database(self):
+        if os.path.exists(self.db_path):
+            bak_path = self.db_path + ".bak"
+            shutil.copy2(self.db_path, bak_path)
+            return bak_path
+        return None
+
+    def get_table_columns(self, table_name):
         self.connect()
         try:
-            self.execute('''
-            INSERT INTO trades (trade_date, stock_code, stock_name, trade_type, quantity, price, amount, 
-                               order_status, filled_quantity, order_type, duration, time_slot, 
-                               currency, market, brokerage, tax, net_amount, trade_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (trade_data.get('trade_date'), trade_data.get('stock_code'), trade_data.get('stock_name'),
-                  trade_data.get('trade_type'), trade_data.get('quantity'), trade_data.get('price'),
-                  trade_data.get('amount'), trade_data.get('order_status'), trade_data.get('filled_quantity'),
-                  trade_data.get('order_type'), trade_data.get('duration'), trade_data.get('time_slot'),
-                  trade_data.get('currency'), trade_data.get('market'), trade_data.get('brokerage'),
-                  trade_data.get('tax'), trade_data.get('net_amount'), trade_data.get('trade_id')))
+            cur = self.execute(f"PRAGMA table_info({table_name})")
+            cols = [row[1] for row in cur.fetchall()]
+            return set(cols)
+        finally:
+            self.disconnect()
+
+    def migrate_tables(self):
+        self.backup_database()
+        existing = self.get_table_columns('trades')
+        add_sql = []
+        if 'order_status' not in existing:
+            add_sql.append("ALTER TABLE trades ADD COLUMN order_status TEXT")
+        if 'filled_quantity' not in existing:
+            add_sql.append("ALTER TABLE trades ADD COLUMN filled_quantity INTEGER")
+        if 'order_type' not in existing:
+            add_sql.append("ALTER TABLE trades ADD COLUMN order_type TEXT")
+        if 'duration' not in existing:
+            add_sql.append("ALTER TABLE trades ADD COLUMN duration TEXT")
+        if 'time_slot' not in existing:
+            add_sql.append("ALTER TABLE trades ADD COLUMN time_slot TEXT")
+        if 'currency' not in existing:
+            add_sql.append("ALTER TABLE trades ADD COLUMN currency TEXT")
+        if 'market' not in existing:
+            add_sql.append("ALTER TABLE trades ADD COLUMN market TEXT")
+        if 'brokerage' not in existing:
+            add_sql.append("ALTER TABLE trades ADD COLUMN brokerage REAL DEFAULT 0")
+        if 'tax' not in existing:
+            add_sql.append("ALTER TABLE trades ADD COLUMN tax REAL DEFAULT 0")
+        if 'net_amount' not in existing:
+            add_sql.append("ALTER TABLE trades ADD COLUMN net_amount REAL NOT NULL DEFAULT 0")
+        if 'trade_id' not in existing:
+            add_sql.append("ALTER TABLE trades ADD COLUMN trade_id TEXT")
+        self.connect()
+        try:
+            for sql in add_sql:
+                self.execute(sql)
+            self.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_trade_id ON trades(trade_id)")
             self.commit()
-            return self.cursor.lastrowid
+        finally:
+            self.disconnect()
+
+    def insert_trade(self, trade_data):
+        self.connect()
+        try:
+            cols = self.get_table_columns('trades')
+            data = dict(trade_data)
+            if not data.get('net_amount'):
+                amt = float(data.get('amount') or 0)
+                brk = float(data.get('brokerage') or 0)
+                tax = float(data.get('tax') or 0)
+                t = data.get('trade_type')
+                if t == 'BUY':
+                    data['net_amount'] = amt + brk + tax
+                elif t == 'SELL':
+                    data['net_amount'] = amt - brk - tax
+                else:
+                    data['net_amount'] = amt
+            insert_cols = [k for k in data.keys() if k in cols]
+            placeholders = ", ".join(["?"] * len(insert_cols))
+            col_list = ", ".join(insert_cols)
+            values = [data.get(k) for k in insert_cols]
+            self.execute(f"INSERT INTO trades ({col_list}) VALUES ({placeholders})", values)
+            self.commit()
+            return True
         except sqlite3.IntegrityError as e:
             print(f"交易记录插入失败: {e}")
-            return None
+            return False
         finally:
             self.disconnect()
 

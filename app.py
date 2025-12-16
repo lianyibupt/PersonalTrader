@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import uuid
 from datetime import datetime
+from dotenv import load_dotenv
 from src.utils.database import DatabaseManager
 from src.data_ingestion.data_importer import DataImporter
 from src.llm.llm_manager import LLMManager
@@ -9,6 +10,9 @@ from src.knowledge_graph.graph_manager import GraphManager
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+
+# 加载 .env 配置
+load_dotenv()
 
 # 设置页面配置
 st.set_page_config(
@@ -211,6 +215,15 @@ elif st.session_state.selected_tab == "数据导入":
     else:
         st.write("暂无交易记录")
 
+    st.divider()
+    if st.button("修复数据库结构", type="secondary"):
+        with st.spinner("正在修复数据库结构..."):
+            try:
+                db_manager.init_database()
+                st.success("数据库结构已修复")
+            except Exception as e:
+                st.error(f"修复失败: {str(e)}")
+
 # 交易分析界面
 elif st.session_state.selected_tab == "交易分析":
     st.title("📈 交易分析")
@@ -318,6 +331,45 @@ elif st.session_state.selected_tab == "交易分析":
 elif st.session_state.selected_tab == "知识图谱":
     st.title("🧠 知识图谱")
     st.write("使用知识图谱可视化您的交易数据和关系。")
+    with st.expander("LLM配置", expanded=False):
+        mode = st.radio("选择聊天模式", ["本地(LM Studio)", "云端(OpenAI兼容)"])
+        if mode == "本地(LM Studio)":
+            base = st.text_input("本地服务Base URL", value=os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:1234/v1"))
+            if st.button("应用配置", key="cfg_local"):
+                graph_manager.configure_llm("local", base_url=base)
+                st.success("已切换至本地模式")
+        else:
+            base = st.text_input("云端Base URL", value=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
+            key = st.text_input("API Key", type="password")
+            if st.button("应用配置", key="cfg_cloud"):
+                graph_manager.configure_llm("cloud", base_url=base, api_key=key)
+                st.success("已切换至云端模式")
+
+        st.divider()
+        st.write("#### Embedding 配置（用于语义检索）")
+        prov = st.radio("Embedding提供者", ["Ollama", "OpenAI兼容"], horizontal=True)
+        if prov == "Ollama":
+            ebase = st.text_input("Ollama Base URL", value=os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"))
+            emodel = st.text_input("Ollama Embedding 模型", value=os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text:latest"))
+            if st.button("应用Embedding配置", key="cfg_embed_ollama"):
+                graph_manager.configure_embedding("ollama", base_url=ebase, model=emodel)
+                st.success("已配置本地Embedding (Ollama)")
+        else:
+            ebase = st.text_input("OpenAI兼容 Base URL", value=os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:1234/v1"))
+            emodel = st.text_input("Embedding 模型", value=os.getenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-qwen3-embedding-4b"))
+            ekey = st.text_input("Embedding API Key", type="password")
+            if st.button("应用Embedding配置", key="cfg_embed_openai"):
+                graph_manager.configure_embedding("openai", base_url=ebase, model=emodel, api_key=ekey)
+                st.success("已配置本地OpenAI兼容Embedding")
+
+        disable_cognee = st.checkbox("禁用 Cognee 认知与记忆（仅使用本地检索）", value=False)
+        if hasattr(graph_manager, "configure_cognee"):
+            graph_manager.configure_cognee(not disable_cognee)
+        else:
+            from src.knowledge_graph.graph_manager import GraphManager as _GM
+            graph_manager = _GM()
+            graph_manager.initialize()
+            graph_manager.use_cognee = not disable_cognee
     
     # 构建知识图谱
     if st.button("构建/更新知识图谱", type="primary"):

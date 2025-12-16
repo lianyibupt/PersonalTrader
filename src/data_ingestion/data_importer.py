@@ -1,12 +1,15 @@
 import pandas as pd
 import os
 import re
+import logging
 from datetime import datetime
 from src.utils.database import DatabaseManager
 
 class DataImporter:
     def __init__(self):
         self.db_manager = DatabaseManager()
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        self.logger = logging.getLogger(__name__)
         self.supported_formats = ['.csv', '.xlsx', '.xls']
 
     def is_supported_format(self, file_path):
@@ -69,7 +72,7 @@ class DataImporter:
         }
 
         # 交易日期检测
-        date_patterns = ['date', 'trade_date', '成交日期', '交易日期', '日期']
+        date_patterns = ['date', 'trade_date', '成交日期', '交易日期', '日期', '下单时间', '成交时间']
         for col in columns:
             if any(pattern in col for pattern in date_patterns):
                 column_mapping['trade_date'] = df.columns[columns.get_loc(col)]
@@ -90,28 +93,28 @@ class DataImporter:
                 break
 
         # 交易类型检测
-        type_patterns = ['type', 'trade_type', '买卖', '交易类型', '操作', '方向']
+        type_patterns = ['type', 'trade_type', '买卖', '交易类型', '操作', '方向', '交易方向']
         for col in columns:
             if any(pattern in col for pattern in type_patterns):
                 column_mapping['trade_type'] = df.columns[columns.get_loc(col)]
                 break
 
         # 数量检测
-        quantity_patterns = ['quantity', '股数', '数量', '成交数量', '成交量']
+        quantity_patterns = ['quantity', '股数', '数量', '成交数量', '成交量', '订单数量']
         for col in columns:
             if any(pattern in col for pattern in quantity_patterns):
                 column_mapping['quantity'] = df.columns[columns.get_loc(col)]
                 break
 
         # 价格检测
-        price_patterns = ['price', '价格', '成交价格', '成交价']
+        price_patterns = ['price', '价格', '成交价格', '成交价', '订单价格']
         for col in columns:
             if any(pattern in col for pattern in price_patterns):
                 column_mapping['price'] = df.columns[columns.get_loc(col)]
                 break
 
         # 金额检测
-        amount_patterns = ['amount', '金额', '成交金额', '成交额']
+        amount_patterns = ['amount', '金额', '成交金额', '成交额', '订单金额']
         for col in columns:
             if any(pattern in col for pattern in amount_patterns):
                 column_mapping['amount'] = df.columns[columns.get_loc(col)]
@@ -197,23 +200,20 @@ class DataImporter:
         return column_mapping
 
     def clean_trade_data(self, df, column_mapping):
-        """清洗交易数据"""
-        # 创建新的DataFrame用于存储清洗后的数据
         cleaned_data = []
 
         for _, row in df.iterrows():
             trade_record = {}
 
-            # 处理交易日期
             try:
                 date_col = column_mapping['trade_date']
                 if pd.notna(row[date_col]):
                     if isinstance(row[date_col], datetime):
                         trade_record['trade_date'] = row[date_col].strftime('%Y-%m-%d %H:%M:%S')
                     else:
-                        # 尝试解析字符串日期
-                        date_str = str(row[date_col])
-                        # 常见日期格式
+                        date_str = str(row[date_col]).strip()
+                        date_str = re.sub(r'（.*?）', '', date_str)
+                        date_str = re.sub(r'\(.*?\)', '', date_str).strip()
                         date_formats = [
                             '%Y-%m-%d %H:%M:%S',
                             '%Y-%m-%d %H:%M',
@@ -234,7 +234,6 @@ class DataImporter:
                             except ValueError:
                                 continue
                         if not parsed:
-                            # 尝试从时间戳解析
                             try:
                                 timestamp = float(date_str)
                                 dt = datetime.fromtimestamp(timestamp)
@@ -431,22 +430,30 @@ class DataImporter:
         return cleaned_data
 
     def import_data(self, file_path, column_mapping=None):
-        """导入数据到数据库"""
-        # 读取文件
         df = self.read_file(file_path)
+        try:
+            total_rows = len(df)
+        except Exception:
+            total_rows = -1
+        self.logger.info(f"开始导入文件: {file_path}, 行数: {total_rows}")
 
-        # 检测或使用提供的列映射
         if not column_mapping:
             column_mapping = self.detect_columns(df)
+        self.logger.info(f"列映射结果: {column_mapping}")
 
-        # 检查必要字段
         if not column_mapping['trade_date'] or not column_mapping['stock_code'] or not column_mapping['trade_type']:
             raise Exception("无法检测到必要的字段映射关系")
 
-        # 清洗数据
         cleaned_data = self.clean_trade_data(df, column_mapping)
 
+        self.logger.info(f"清洗后有效记录数: {len(cleaned_data)}")
+
         if not cleaned_data:
+            try:
+                sample_dates = df[column_mapping['trade_date']].head().tolist()
+            except Exception:
+                sample_dates = []
+            self.logger.warning(f"没有可导入的有效数据, 示例日期值: {sample_dates}")
             raise Exception("没有可导入的有效数据")
 
         # 导入到数据库
