@@ -20,10 +20,16 @@ class GraphManager:
         self.graph_data = {"nodes": [], "edges": []}
         self.initialized = False
         self.mode = "cognee"  # cognee 或 local 回退模式
+        self.llm_provider = None
         self.base_url = os.getenv("OPENAI_BASE_URL")
         self.api_key = os.getenv("OPENAI_API_KEY")
-        # Embedding provider config
-        self.embed_provider = None  # "ollama" | "openai"
+        if (not self.api_key) and (self.base_url or "").startswith(("http://127.0.0.1", "http://localhost")):
+            os.environ["OPENAI_API_KEY"] = "local"
+            os.environ.setdefault("LLM_API_KEY", "local")
+            os.environ.setdefault("LLM_ENDPOINT", self.base_url or "http://127.0.0.1:1234/v1")
+            os.environ.setdefault("LLM_PROVIDER", "openai")
+            self.api_key = os.getenv("OPENAI_API_KEY")
+        self.embed_provider = None
         self.embed_base_url = None
         self.embed_model = None
         self.embed_api_key = None
@@ -43,21 +49,70 @@ class GraphManager:
             logger.error(f"Cognee知识图谱初始化失败: {str(e)}")
             return False
 
-    def configure_llm(self, provider, base_url=None, api_key=None):
+    @staticmethod
+    def _normalize_litellm_model(model: str, provider: str = "openai"):
+        if not model:
+            return model
+        m = str(model).strip()
+        known_prefixes = (
+            "openai/",
+            "ollama/",
+            "anthropic/",
+            "gemini/",
+            "mistral/",
+            "huggingface/",
+            "custom/",
+        )
+        if m.startswith(known_prefixes):
+            return m
+        return f"{provider}/{m}"
+
+    def configure_llm(self, provider, base_url=None, api_key=None, model=None):
+        self.llm_provider = provider
         if provider == "local":
-            os.environ["OPENAI_BASE_URL"] = base_url or "http://127.0.0.1:1234/v1"
-            os.environ["OPENAI_API_KEY"] = api_key or "lm-studio"
+            resolved_base = base_url or "http://127.0.0.1:1234/v1"
+            resolved_key = api_key or "local"
+            resolved_model = model or os.getenv("LLM_MODEL") or "qwen/qwen3-vl-4b"
+            resolved_model = self._normalize_litellm_model(resolved_model, provider="openai")
+            os.environ["OPENAI_BASE_URL"] = resolved_base
+            os.environ["OPENAI_API_KEY"] = resolved_key
+            os.environ["LLM_PROVIDER"] = "openai"
+            os.environ["LLM_ENDPOINT"] = resolved_base
+            os.environ["LLM_API_KEY"] = resolved_key
+            os.environ["LLM_MODEL"] = resolved_model
         else:
             if base_url:
                 os.environ["OPENAI_BASE_URL"] = base_url
             if api_key:
                 os.environ["OPENAI_API_KEY"] = api_key
+            if base_url:
+                os.environ["LLM_ENDPOINT"] = base_url
+            if api_key:
+                os.environ["LLM_API_KEY"] = api_key
+            if model:
+                os.environ["LLM_MODEL"] = self._normalize_litellm_model(model, provider=os.getenv("LLM_PROVIDER", "openai"))
+            if self.use_cognee:
+                self.mode = "cognee"
+            else:
+                self.mode = "embedding_local"
         self.base_url = os.getenv("OPENAI_BASE_URL")
         self.api_key = os.getenv("OPENAI_API_KEY")
-        self.mode = "cognee"
+        try:
+            from cognee.infrastructure.llm.config import get_llm_config
+
+            get_llm_config.cache_clear()
+        except Exception:
+            pass
 
     def configure_cognee(self, enabled: bool):
         self.use_cognee = bool(enabled)
+        if self.use_cognee:
+            self.mode = "cognee"
+        else:
+            if self.embed_provider:
+                self.mode = "embedding_local"
+            else:
+                self.mode = "local"
 
     def configure_embedding(self, provider, base_url, model, api_key=None):
         self.embed_provider = provider
@@ -122,7 +177,8 @@ class GraphManager:
             
             logger.info(f"开始处理 {len(trades)} 条交易记录")
 
-            processed_count = 0
+            total_count = len(trades)
+            cognee_processed = 0
             try:
                 if self.use_cognee:
                     async def _process_trades():
@@ -145,14 +201,14 @@ class GraphManager:
                         await cognee.memify()
                         return processed
 
-                    processed_count = asyncio.run(_process_trades())
+                    cognee_processed = asyncio.run(_process_trades())
                 else:
-                    processed_count = 0
+                    cognee_processed = 0
             except Exception as e:
                 # 若因 LLM API Key 或远端依赖不可用导致失败，回退到本地模式
                 logger.error(f"Cognee 处理失败，回退到本地模式: {e}")
                 self.mode = "local"
-                processed_count = 0
+                cognee_processed = 0
 
             # 同时构建一个用于前端展示的简化图结构
             nodes = {}
@@ -192,7 +248,7 @@ class GraphManager:
 
             self.graph_data = {"nodes": list(nodes.values()), "edges": edges}
 
-            logger.info(f"知识图谱构建完成，成功处理 {processed_count} 条交易记录")
+            logger.info(f"知识图谱构建完成，交易总数 {total_count}，Cognee处理 {cognee_processed}")
             # 若配置了本地Embedding，则构建向量索引
             if self.embed_provider:
                 try:
@@ -214,7 +270,7 @@ class GraphManager:
                     logger.info(f"已构建本地Embedding索引，共 {len(index)} 条")
                 except Exception as ie:
                     logger.error(f"构建本地Embedding索引失败: {ie}")
-            return processed_count
+            return total_count
             
         except Exception as e:
             logger.error(f"构建知识图谱失败: {str(e)}")
@@ -240,7 +296,7 @@ class GraphManager:
                 raise Exception("知识图谱未初始化")
         
         try:
-            if self.mode == "cognee":
+            if self.mode == "cognee" and self.use_cognee:
                 async def _search():
                     return await cognee.search(
                         query_text=query,
@@ -315,13 +371,15 @@ class GraphManager:
                 raise Exception("知识图谱未初始化")
         
         try:
-            # 通过语义搜索获取与该股票相关的记忆
-            async def _search_stock():
-                query_text = f"关于股票 {stock_code} 的所有交易和记忆"
-                return await cognee.search(query_text=query_text, top_k=20)
+            if self.mode == "cognee" and self.use_cognee:
+                async def _search_stock():
+                    query_text = f"关于股票 {stock_code} 的所有交易和记忆"
+                    return await cognee.search(query_text=query_text, top_k=20)
 
-            results = asyncio.run(_search_stock())
-            return results
+                results = asyncio.run(_search_stock())
+                return results
+            query_text = f"关于股票 {stock_code} 的所有交易和记忆"
+            return self.query_graph(query_text, limit=20)
         except Exception as e:
             logger.error(f"获取股票关系数据失败: {str(e)}")
             return None
@@ -333,11 +391,11 @@ class GraphManager:
                 raise Exception("知识图谱未初始化")
         
         try:
-            # 清除 Cognee 记忆（通过 prune API）
-            async def _clear():
-                await cognee.prune()
+            if self.mode == "cognee" and self.use_cognee:
+                async def _clear():
+                    await cognee.prune()
 
-            asyncio.run(_clear())
+                asyncio.run(_clear())
             self.graph_data = {"nodes": [], "edges": []}
             logger.info("知识图谱数据已清空")
             return True

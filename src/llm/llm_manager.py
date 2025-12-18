@@ -13,14 +13,23 @@ class LLMManager:
     def __init__(self, model="qwen/qwen3-vl-4b", api_url=None):
         base_url = os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:1234/v1")
         self.api_key = os.getenv("OPENAI_API_KEY")
+        if (not self.api_key) and base_url.startswith(("http://127.0.0.1", "http://localhost")):
+            self.api_key = "local"
         self.model = model
         self.api_url = api_url or f"{base_url}/chat/completions"
+        self._api_url_from_env = api_url is None
         self.db_manager = DatabaseManager()
         self.graph_manager = GraphManager()
         
     def generate_response(self, prompt, chat_history=None):
         """生成LLM响应"""
         try:
+            api_key = os.getenv("OPENAI_API_KEY") or ("local" if os.getenv("OPENAI_BASE_URL", "").startswith(("http://127.0.0.1", "http://localhost")) else None)
+            api_url = self.api_url
+            if self._api_url_from_env:
+                base_url = os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:1234/v1")
+                api_url = f"{base_url}/chat/completions"
+
             # 构建消息历史
             messages = []
             
@@ -39,8 +48,8 @@ class LLMManager:
             
             # 调用LM Studio的OpenAI兼容API
             headers = {"Content-Type": "application/json"}
-            if self.api_key:
-                headers["Authorization"] = f"Bearer {self.api_key}"
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
             payload = {
                 "model": self.model,
                 "messages": messages,
@@ -48,7 +57,7 @@ class LLMManager:
                 "max_tokens": 2000
             }
             
-            response = requests.post(self.api_url, headers=headers, json=payload)
+            response = requests.post(api_url, headers=headers, json=payload)
             response.raise_for_status()
             
             return response.json()["choices"][0]["message"]["content"]

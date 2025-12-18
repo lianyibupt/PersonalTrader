@@ -3,6 +3,9 @@ import os
 import uuid
 from datetime import datetime
 from dotenv import load_dotenv
+
+load_dotenv()
+
 from src.utils.database import DatabaseManager
 from src.data_ingestion.data_importer import DataImporter
 from src.llm.llm_manager import LLMManager
@@ -10,9 +13,6 @@ from src.knowledge_graph.graph_manager import GraphManager
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-
-# 加载 .env 配置
-load_dotenv()
 
 # 设置页面配置
 st.set_page_config(
@@ -335,14 +335,22 @@ elif st.session_state.selected_tab == "知识图谱":
         mode = st.radio("选择聊天模式", ["本地(LM Studio)", "云端(OpenAI兼容)"])
         if mode == "本地(LM Studio)":
             base = st.text_input("本地服务Base URL", value=os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:1234/v1"))
+            key = st.text_input("本地API Key", value=os.getenv("OPENAI_API_KEY", "local"), type="password")
+            model = st.text_input("Cognee LLM 模型", value=os.getenv("LLM_MODEL", "openai/qwen/qwen3-vl-4b"))
             if st.button("应用配置", key="cfg_local"):
-                graph_manager.configure_llm("local", base_url=base)
+                graph_manager.configure_llm(
+                    "local",
+                    base_url=base,
+                    api_key=(key or "local"),
+                    model=(model or "openai/qwen/qwen3-vl-4b"),
+                )
                 st.success("已切换至本地模式")
         else:
             base = st.text_input("云端Base URL", value=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
             key = st.text_input("API Key", type="password")
+            model = st.text_input("Cognee LLM 模型", value=os.getenv("LLM_MODEL", "openai/gpt-5-mini"))
             if st.button("应用配置", key="cfg_cloud"):
-                graph_manager.configure_llm("cloud", base_url=base, api_key=key)
+                graph_manager.configure_llm("cloud", base_url=base, api_key=key, model=model)
                 st.success("已切换至云端模式")
 
         st.divider()
