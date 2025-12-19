@@ -346,9 +346,9 @@ elif st.session_state.selected_tab == "知识图谱":
                 )
                 st.success("已切换至本地模式")
         else:
-            base = st.text_input("云端Base URL", value=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
+            base = st.text_input("云端Base URL", value=os.getenv("OPENAI_BASE_URL", "https://ai.gitee.com/v1"))
             key = st.text_input("API Key", type="password")
-            model = st.text_input("Cognee LLM 模型", value=os.getenv("LLM_MODEL", "openai/gpt-5-mini"))
+            model = st.text_input("Cognee LLM 模型", value=os.getenv("LLM_MODEL", "Qwen3-235B-A22B-Instruct-2507"))
             if st.button("应用配置", key="cfg_cloud"):
                 graph_manager.configure_llm("cloud", base_url=base, api_key=key, model=model)
                 st.success("已切换至云端模式")

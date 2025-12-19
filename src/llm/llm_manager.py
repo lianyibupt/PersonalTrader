@@ -10,11 +10,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 class LLMManager:
-    def __init__(self, model="qwen/qwen3-vl-4b", api_url=None):
-        base_url = os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:1234/v1")
+    def __init__(self, model="Qwen3-235B-A22B-Instruct-2507", api_url=None):
+        base_url = os.getenv("OPENAI_BASE_URL", "https://ai.gitee.com/v1")
         self.api_key = os.getenv("OPENAI_API_KEY")
-        if (not self.api_key) and base_url.startswith(("http://127.0.0.1", "http://localhost")):
-            self.api_key = "local"
+        
         self.model = model
         self.api_url = api_url or f"{base_url}/chat/completions"
         self._api_url_from_env = api_url is None
@@ -24,10 +23,10 @@ class LLMManager:
     def generate_response(self, prompt, chat_history=None):
         """生成LLM响应"""
         try:
-            api_key = os.getenv("OPENAI_API_KEY") or ("local" if os.getenv("OPENAI_BASE_URL", "").startswith(("http://127.0.0.1", "http://localhost")) else None)
+            api_key = self.api_key
             api_url = self.api_url
             if self._api_url_from_env:
-                base_url = os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:1234/v1")
+                base_url = os.getenv("OPENAI_BASE_URL", "https://ai.gitee.com/v1")
                 api_url = f"{base_url}/chat/completions"
 
             # 构建消息历史
@@ -53,7 +52,8 @@ class LLMManager:
             payload = {
                 "model": self.model,
                 "messages": messages,
-                "temperature": 0.7,
+                "temperature": 1,
+                "top_p": 1,
                 "max_tokens": 2000
             }
             
